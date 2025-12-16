@@ -5,6 +5,8 @@ library(GGally)
 library(scales)
 library(patchwork)
 library(glue)
+library(reshape2)
+library(gridExtra)
 # library(imputeTS)
 
 # Load dataset
@@ -572,7 +574,7 @@ y_test <- test_scaled$bg_plus_1
 
 
 # ================================
-# TASK 2.1 — Preprocessing (ALL data)
+# TASK 2.1
 # ================================
 
 df_model_all <- df %>%
@@ -709,8 +711,6 @@ coef_table$Parameter <- gsub("hr_mean", "hr_mean (x4)", coef_table$Parameter)
 coef_table$Parameter <- gsub("steps_sum_log", "steps_sum_log (x5)", coef_table$Parameter)
 coef_table$Parameter <- gsub("cals_sum_log", "cals_sum_log (x6)", coef_table$Parameter)
 
-coef_table
-
 coef_table_display <- coef_table
 coef_table_display[,-1] <- lapply(
   coef_table_display[,-1],
@@ -734,7 +734,7 @@ coef_gt <- coef_table_display |>
   gt(rowname_col = "Parameter") |>
   tab_header(
     title = "Estimated Least Squares Coefficients",
-    subtitle = "Nonlinear Regression Models (Task 2.1)"
+    subtitle = "Nonlinear Regression Models"
   ) |>
   cols_label(
     Model_1 = "Model 1",
@@ -750,7 +750,501 @@ coef_gt <- coef_table_display |>
   ) |>
   opt_all_caps()
 
+coef_gt <- coef_gt |>
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(
+      rows = Parameter != "β₀ (Intercept)"
+    )
+  )
+coef_gt <- coef_gt |>
+  tab_source_note(
+    source_note = "Note. All variables were standardized prior to estimation. Empty cells indicate terms not included in the corresponding model."
+  )
 coef_gt
+
+# ==============================
+# Task 2.2 - Computation of RSS
+# ==============================
+
+# Extract residuals from each model
+resid_m1 <- residuals(model_1)
+resid_m2 <- residuals(model_2)
+resid_m3 <- residuals(model_3)
+resid_m4 <- residuals(model_4)
+resid_m5 <- residuals(model_5)
+
+# Compute RSS
+RSS_m1 <- sum(resid_m1^2)
+RSS_m2 <- sum(resid_m2^2)
+RSS_m3 <- sum(resid_m3^2)
+RSS_m4 <- sum(resid_m4^2)
+RSS_m5 <- sum(resid_m5^2)
+
+# Comparison table
+rss_table <- data.frame(
+  Model = c("Model 1", "Model 2", "Model 3", "Model 4", "Model 5"),
+  RSS = c(RSS_m1, RSS_m2, RSS_m3, RSS_m4, RSS_m5)
+)
+
+rss_table
+
+rss_table %>%
+  gt() %>%
+  tab_header(
+    title = "Residual Sum of Squares (RSS)",
+    subtitle = "Task 2.2: In-sample model fit comparison"
+  )
+
+# End of RSS computation
+
+
+# ==================
+# Task 2.3 Log-likelihood computation
+# ==================
+
+# Store RSS values
+rss_values <- c(
+  Model_1 = RSS_m1,
+  Model_2 = RSS_m2,
+  Model_3 = RSS_m3,
+  Model_4 = RSS_m4,
+  Model_5 = RSS_m5
+)
+
+# Define sample size
+n <- nrow(df)
+
+# Compute residual variance for each model
+sigmahat_sqr <- rss_values / (n - 1)
+
+# Compute the log-likelihood
+log_likelihood <- (n/2) * log(2 * pi) - (n / 2) * log(sigmahat_sqr) - (rss_values / (2 * sigmahat_sqr))
+
+# Create a summary table
+loglik_table <- data.frame(
+  Model = names(rss_values),
+  RSS = round(rss_values, 2),
+  SigmaHat_Sqr = round(sigmahat_sqr, 4),
+  Log_Likelihood = round(log_likelihood, 2)
+)
+
+loglik_table
+
+# Visualization for better clarity
+ggplot(loglik_table, aes(x = Model, y = Log_Likelihood, fill = Model)) +
+  geom_col(width = 0.6) +
+  labs(
+    title = "Log-Likelihood Comparison of Candidate Models",
+    subtitle = "Computed using assignment-defined likelihood",
+    y = "Log-Likelihood",
+    x = "Model"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+
+# End of log-likelihood computation
+
+# ====================
+# Task 2.4 AIC And BIC
+# ====================
+
+# AIC = 2k - 2ln p(D|θ̂)
+# BIC = k·ln(n) - 2ln p(D|θ̂)
+# Where:
+# - k is the number of parameters in the model
+# - n is the number of observations
+# - ln p(D|θ̂) is the log-likelihood function
+
+# Store models in a list
+models <- list(
+  Model_1 = model_1,
+  Model_2 = model_2,
+  Model_3 = model_3,
+  Model_4 = model_4,
+  Model_5 = model_5
+)
+
+# Number of observations
+n <- nobs(model_5)
+
+# Compute parameter counts
+k_values <- sapply(models, function(m) length(coef(m)))
+k_values
+
+# Combine with log-likelihoods
+model_metrics <- data.frame(
+  Model = names(models),
+  k = k_values,
+  LogLikelihood = as.numeric(log_likelihood)
+)
+
+model_metrics
+
+# Compute AIC and BIC
+model_metrics$AIC <- 2 * model_metrics$k - 2 * model_metrics$LogLikelihood
+model_metrics$BIC <- model_metrics$k * log(n) - 2 * model_metrics$LogLikelihood
+
+# AIC and BIC model metrics table
+model_metrics
+
+# Create a comparison table with AIC, BIC,
+# Log-Likelihood, RSS, number of parameters, and model names:
+
+aic_bic_comparison <- data.frame(
+  Model = c("Model 1", "Model 2", "Model 3", "Model 4", "Model 5"),
+  Parameters = k_values,
+  RSS = rss_values,
+  LogLikelihood = log_likelihood,
+  AIC = model_metrics$AIC,
+  BIC = model_metrics$BIC
+)
+
+# Print the comparison table: 
+cat("Model Comparison Table:\n")
+aic_bic_comparison
+
+# Identify the better performing model according to 
+# each criterion:AIC, BIC, RSS and Log-Likelihood
+best_rss <- aic_bic_comparison$Model[which.min(aic_bic_comparison$RSS)] # low RSS is better
+best_loglikelihood <- aic_bic_comparison$Model[which.max(aic_bic_comparison$LogLikelihood)] # High is better
+best_aic <- aic_bic_comparison$Model[which.min(aic_bic_comparison$AIC)] # low AIC is better
+best_bic <- aic_bic_comparison$Model[which.min(aic_bic_comparison$BIC)] # low BIC is better
+
+cat("\nBetter performing model according to RSS:", best_rss, "\n")
+cat("\nBetter performing model according to LogLikelihood:", best_loglikelihood, "\n")
+cat("Better performing model according to AIC:", best_aic, "\n")
+cat("Better performing model according to BIC:", best_bic, "\n")
+
+
+aic_bic_comparison %>%
+  gt() %>%
+  tab_header(
+    title = "AIC and BIC of candidate models",
+    subtitle = "AIC, BIC, RSS and Log-Likelihood comparison"
+  )
+
+# =============================
+# Task 2.5 Distribution of Residuals
+# =============================
+
+# Calculate residuals for each model
+resid_m1 <- residuals(model_1)
+resid_m2 <- residuals(model_2)
+resid_m3 <- residuals(model_3)
+resid_m4 <- residuals(model_4)
+resid_m5 <- residuals(model_5)
+
+# Store residuals in a data frame for easier analysis
+resid_df <- data.frame(
+  Model1 = as.vector(resid_m1),
+  Model2 = as.vector(resid_m2),
+  Model3 = as.vector(resid_m3),
+  Model4 = as.vector(resid_m4),
+  Model5 = as.vector(resid_m5)
+)
+
+# View first few residuals
+head(resid_df)
+
+# Calculation of stats like mean, median, SD, etc
+# Function to calculate residual statistics: 
+get_residual_stats <- function(residual, model) {
+  data.frame(
+    Model = model,
+    Mean = mean(residual),                         # Should be close to zero
+    Median = median(residual),                     # Should be close to zero
+    SD = sd(residual),                             # Measure of spread
+    Skewness = moments::skewness(residual),        # Should be close to 0 for normal distribution
+    Kurtosis = moments::kurtosis(residual),        # Should be close to 3 for normal distribution
+    Min = min(residual),                           # Minimum residual for the model 
+    Max = max(residual),                           # Maximum residual for the model
+    Range = max(residual) - min(residual)          # range of residuals: (max - min)
+  )
+}
+
+# Calculate statistics for each model
+stats1 <- get_residual_stats(resid_m1, "Model 1")
+stats2 <- get_residual_stats(resid_m2, "Model 2")
+stats3 <- get_residual_stats(resid_m3, "Model 3")
+stats4 <- get_residual_stats(resid_m4, "Model 4")
+stats5 <- get_residual_stats(resid_m5, "Model 5")
+
+# Combine all into a single table:
+resid_stats <- rbind(stats1, stats2, stats3, stats4, stats5)
+rownames(resid_stats) <- c("Model 1", "Model 2", "Model 3", "Model 4", "Model 5")
+
+# Print the residual stats data
+resid_stats
+
+# Tabular Visualization
+resid_stats %>%
+  gt() %>%
+  tab_header(
+    title = "Residual statistics"
+  )
+
+# Normality check of Residuals
+
+# Generate residual histograms for all models
+
+# Reshape data from wide to long format for easier plotting (Column to row conversion type)
+# ggplot works better with long format
+# Using facet_wrap(model) all models can be plotted together
+# One plot shows residuals from all models side by side
+residuals_long <- melt(resid_df,
+                       variable.name = "Model",
+                       value.name = "Residual")
+
+
+# Create histogram plot with density overlay and rug plot for each model
+hist_plot <- ggplot(residuals_long, aes(x = Residual)) +
+  
+  # Plot histogram of residuals with density scaling
+  geom_histogram(
+    aes(y = after_stat(density)),     # Use density instead of raw counts
+    bins = 30,                # Number of bins in histogram
+    fill = "palegreen",         # Bar fill color
+    color = "white",          # Border color of bars
+    alpha = 0.7               # Transparency for visual softness
+  ) +
+  
+  # Add actual density curve (smooth estimate of distribution)
+  geom_density(
+    color = "darkgreen",       # Line color for density
+    linewidth = 1             # Line thickness
+  ) +
+  
+  # Add rug plot for residuals (shows individual values)
+  geom_rug(
+    aes(x = Residual), 
+    sides = "b", 
+    color = "black", 
+    alpha = 0.3, 
+    length = unit(0.08, "npc")
+  ) +
+  
+  # Facet the plot by each model so each gets its own histogram
+  facet_wrap(~ Model, scales = "free_y") +
+  
+  # Add informative titles and axis labels
+  labs(
+    title = "Residual Distributions Across Models",
+    subtitle = "Histogram with Density Curve (Green) and Rug Plot (Black)",
+    x = "Residual Value",
+    y = "Density"
+  ) +
+  
+  # Use a clean minimal theme for clarity
+  theme_minimal() +
+  theme(
+    strip.text = element_text(size = 12, face = "bold"),     # Model names
+    plot.title = element_text(hjust = 0.5, face = "bold"),   # Centered bold title
+    plot.subtitle = element_text(hjust = 0.5)                # Centered subtitle
+  )
+
+hist_plot
+
+
+
+# Q-Q Plots for Normality Check
+
+# Function to create a Q-Q plot for residuals
+create_qq_plot <- function(residuals_std, model_name, point_color) {
+  
+  # Get the number of residuals
+  n <- length(residuals_std)
+  
+  # Compute the percentiles for the residuals
+  # These are used to get the corresponding theoretical quantiles
+  p <- (1:n - 0.5) / n
+  
+  # Compute the theoretical quantiles from the standard normal distribution
+  theoretical_q <- qnorm(p)
+  
+  # Sort the standardized residuals to get empirical quantiles
+  empirical_q <- sort(residuals_std)
+  
+  # Create a data frame with both quantiles for plotting
+  qq_data <- data.frame(
+    Theoretical = theoretical_q,
+    Empirical = empirical_q
+  )
+  
+  # Create the Q-Q plot
+  ggplot(qq_data, aes(x = Theoretical, y = Empirical)) +
+    geom_point(color = point_color, alpha = 0.6) +  # Add the points (empirical vs theoretical)
+    
+    # Add a 45-degree reference line (y = x), indicating perfect normality
+    geom_abline(intercept = 0, slope = 1, color = "red", 
+                linetype = "dashed", linewidth = 1) +
+    
+    # Add titles and axis labels
+    labs(
+      title = paste("Q-Q Plot - ", model_name),
+      x = "Theoretical Quantiles",
+      y = "Residual Quantiles"
+    ) +
+    
+    # Use a minimal theme for a clean look
+    theme_minimal() +
+    
+    # Customize the plot title appearance
+    theme(
+      plot.title = element_text(hjust = 0.5, face = "bold", size = 12)
+    )
+}
+
+
+# Creation of Q-Q plots by calling the function
+qq1 <- create_qq_plot(resid_m1, "Model 1", "brown")
+qq2 <- create_qq_plot(resid_m2, "Model 2", "orange")
+qq3 <- create_qq_plot(resid_m3, "Model 3", "purple")
+qq4 <- create_qq_plot(resid_m4, "Model 4", "forestgreen")
+qq5 <- create_qq_plot(resid_m5, "Model 5", "blue")
+
+# Display all plots in a two-column grid
+grid.arrange(qq1, qq2, qq3, qq4, qq5, ncol = 2, top = "Comparison of Q-Q plots for model residuals")
+
+
+# ====================================
+# Task 2.6 Selection of the best model
+# ====================================
+
+# Table that shows that checks the best rss, aic and bic
+aic_bic_comparison <- aic_bic_comparison %>%
+  mutate(
+    Best_RSS = ifelse(RSS == min(RSS), "✔", ""),
+    Best_AIC = ifelse(AIC == min(AIC), "✔", ""),
+    Best_BIC = ifelse(BIC == min(BIC), "✔", "")
+
+      )
+
+# Print
+aic_bic_comparison
+
+
+# RSS comparison
+ggplot(aic_bic_comparison, aes(x = Model, y = RSS)) +
+  geom_col() +
+  labs(title = "RSS Comparison Across Models", y = "RSS") +
+  theme_minimal()
+
+# AIC comparison
+ggplot(aic_bic_comparison, aes(x = Model, y = AIC)) +
+  geom_col() +
+  labs(title = "AIC Comparison Across Models", y = "AIC") +
+  theme_minimal()
+
+# BIC comparison
+ggplot(aic_bic_comparison, aes(x = Model, y = BIC)) +
+  geom_col() +
+  labs(title = "BIC Comparison Across Models", y = "BIC") +
+  theme_minimal()
+
+
+
+# Model Summary For better visualization
+model_summary <- aic_bic_comparison %>%
+  mutate(
+    RSS_norm = rescale(RSS, to = c(0,1)),
+    AIC_norm = rescale(AIC, to = c(0,1)),
+    BIC_norm = rescale(BIC, to = c(0,1))
+  ) %>%
+  select(Model, Parameters, RSS_norm, AIC_norm, BIC_norm)
+
+
+# Convert to Long format for heatmap
+heatmap_data <- model_summary %>%
+  pivot_longer(
+    cols = c(RSS_norm, AIC_norm, BIC_norm),
+    names_to = "Metric",
+    values_to = "Score"
+  )
+
+# Highlight the selected model
+
+model_order <- c("Model 5", "Model 4", "Model 3", "Model 2", "Model 1")
+
+heatmap_data$Model <- factor(heatmap_data$Model, levels = model_order)
+
+# Create single visualization
+final_plot_fixed <- ggplot(
+  heatmap_data,
+  aes(x = Metric, y = Model, fill = Score)
+) +
+  geom_tile(color = "white", linewidth = 0.8) +
+  
+  scale_fill_gradient(
+    low = "#2ECC71",
+    high = "#E74C3C",
+    name = "Relative\nPerformance\n(Lower is Better)"
+  ) +
+  
+  labs(
+    title = "Model Selection Summary Across Candidate Regression Models",
+    subtitle = "Comparison based on RSS, AIC, BIC (normalized); lower values indicate better performance",
+    x = "Evaluation Metric",
+    y = "Candidate Model"
+  ) +
+  
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5),
+    axis.text.x = element_text(face = "bold"),
+    axis.text.y = element_text(face = "bold"),
+    panel.grid = element_blank()
+  ) +
+
+  geom_tile(
+    data = subset(heatmap_data, Model == "Model 5"),
+    fill = NA,
+    color = "black",
+    linewidth = 1.2
+  )
+
+final_plot_fixed
+
+# Diagnostic table
+diagnostic_table <- resid_stats %>%
+  select(
+    Model,
+    Mean,
+    Median,
+    SD,
+    Skewness,
+    Kurtosis
+  ) %>%
+  mutate(
+    Mean = round(Mean, 3),
+    Median = round(Median, 3),
+    SD = round(SD, 3),
+    Skewness = round(Skewness, 3),
+    Kurtosis = round(Kurtosis, 3)
+  )
+
+diagnostic_table
+
+
+diagnostic_table %>%
+  gt() %>%
+  tab_header(
+    title = "Residual Diagnostic Summary Across Candidate Models",
+    subtitle = "Mean and median close to zero and low skewness indicate approximate Gaussian residuals"
+  ) %>%
+  fmt_number(
+    columns = c(Mean, Median, SD, Skewness, Kurtosis),
+    decimals = 3
+  )
+
+
+
+
+
+
+
 
 
 # Distribution Plots
